@@ -21,6 +21,11 @@ const readme = [
   '# Environment', 'Copy the environment template and set the variables required by your deployment.',
 ].join('\n');
 
+// Assemble synthetic key markers at runtime so repository scans don't flag the test source.
+const openSshKeyLabel = 'OPENSSH PRIVATE KEY';
+const privateKeyHeader = `-----BEGIN ${openSshKeyLabel}-----`;
+const privateKeyFooter = `-----END ${openSshKeyLabel}-----`;
+
 function analyze(files, unreadPaths = []) {
   const checks = analyzeRepository({
     branch: 'main',
@@ -70,7 +75,6 @@ test('finds path, Windows and environment risks and masks every supported secret
     'sk-' + 'o'.repeat(23), 'AKID' + 't'.repeat(12), 'LTAI' + 'a'.repeat(12), 'AKIA' + '7'.repeat(16),
     'b'.repeat(25), 'ghp_' + 'g'.repeat(36), 'github_pat_' + 'p'.repeat(25),
   ];
-  const privateHeader = '-----BEGIN OPENSSH PRIVATE KEY-----';
   const report = analyze({
     'README.md': readme + '\n\n' + 'Run with ' + String.fromCharCode(96) + 'cmd /c setup.cmd' + String.fromCharCode(96),
     'package.json': JSON.stringify({ scripts: { start: 'set MODE=local && powershell -File setup.ps1' } }),
@@ -81,7 +85,7 @@ test('finds path, Windows and environment risks and masks every supported secret
     '.env.local': tokens.slice(0, 4).join('\n'),
     '.env.production.example': 'PLACEHOLDER=unset',
     'config/settings.json': JSON.stringify({ output: 'D:\\project\\output', root: '/Users/alice/app', cache: '/root/cache' }, null, 2),
-    'src/client.js': ['Bearer', ...tokens.slice(4), privateHeader].join('\n'),
+    'src/client.js': ['Bearer', ...tokens.slice(4), privateKeyHeader].join('\n'),
     ['nested/' + tokens[0] + '.txt']: 'text',
   });
   assert.equal(report.readiness.total, 40);
@@ -96,7 +100,8 @@ test('finds path, Windows and environment risks and masks every supported secret
     assert.ok(!json.includes(token));
     assert.ok(json.includes(token.slice(0, 4) + '****' + token.slice(-4)));
   }
-  assert.ok(!json.includes(privateHeader));
+  assert.deepEqual(report.security.privateKeys.filePaths, ['src/client.js']);
+  assert.ok(!json.includes(privateKeyHeader));
   assert.ok(report.risks.some(risk => risk.lineNumber === 1 && risk.redactedSnippet === 'Bearer bbbb****bbbb'));
 });
 
@@ -205,7 +210,7 @@ test('AI context projects repository content onto safe facts before external tra
   const unknownKey = 'local-secret-example-QxZ!';
   const files = {
     'README.md': ['# Express web framework', knownKey, 'Password: server', unknownKey, 'postgres://root:somepass@localhost/db',
-      '-----BEGIN OPENSSH PRIVATE KEY-----', 'privatekeybody8865', '-----END OPENSSH PRIVATE KEY-----',
+      privateKeyHeader, 'privatekeybody8865', privateKeyFooter,
       '_'.repeat(1500), 'analytics'].join('\n'),
     'package.json': JSON.stringify({
       name: privateName, scripts: { dev: 'node server.js --token ' + unknownKey },
