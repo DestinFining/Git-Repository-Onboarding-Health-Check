@@ -5,13 +5,13 @@ import { join } from 'node:path';
 
 const hosts = new Set(['github.com', 'gitlab.com', 'bitbucket.org', 'codeberg.org', 'gitee.com']);
 const gitTimeout = 30_000;
-export const maxFileBytes = 1024 * 1024;
+export const maxFileBytes = 512 * 1024;
 const maxTextBytes = 24 * maxFileBytes;
 const maxTextFiles = 4_000;
 const maxTreeBytes = 8 * maxFileBytes;
 
 const ignoredDirectories = new Set([
-  '.git', 'node_modules', 'vendor', 'dist', 'build', '__pycache__', '.next', '.venv', 'coverage', 'target',
+  '.git', 'node_modules', 'vendor', 'dist', 'build', '__pycache__', '.next', '.nuxt', 'venv', '.venv', 'coverage', 'target',
 ]);
 const binaryExtensions = /\.(?:png|jpe?g|gif|webp|ico|bmp|tiff?|avif|heic|psd|mp[34]|mov|avi|mkv|webm|wav|ogg|flac|aac|zip|gz|bz2|xz|tgz|tar|7z|rar|pdf|docx?|xlsx?|pptx?|woff2?|ttf|otf|exe|dll|so|dylib|wasm|class|jar|pyc|sqlite3?)$/i;
 
@@ -174,7 +174,9 @@ async function readContents(cwd: string, files: TrackedFile[], remaining: () => 
   let bytes = 0;
   let uniqueBytes = 0;
   for (const file of files) {
-    if (binaryExtensions.test(file.path)) continue;
+    const name = file.path.split('/').at(-1)!.toLowerCase();
+    if (binaryExtensions.test(name) || /(?:\.min\.(?:js|css)|\.bundle\.js|\.map|\.db|\.p12|\.pfx|\.jks)$/.test(name) ||
+        /^(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|cargo\.lock|go\.sum|composer\.lock)$/.test(name)) continue;
     if (file.size > maxFileBytes || bytes + file.size > maxTextBytes || selectedPaths.size >= maxTextFiles) {
       unreadPaths.add(file.path);
       continue;

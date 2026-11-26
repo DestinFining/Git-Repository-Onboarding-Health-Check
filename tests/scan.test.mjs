@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, X509Certificate } from 'node:crypto';
+import { rootCertificates } from 'node:tls';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -54,7 +55,7 @@ test('normalizes public Git HTTPS roots and rejects unsafe inputs', () => {
 test('scores a complete portable project and ignores ordinary comments, URLs and regexes', () => {
   const report = analyze({
     'README.en.md': readme,
-    'package.json': '{"scripts":{"build":"tsc"}}',
+    'package.json': '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"^5"}}',
     '.env.example': 'PORT=3000',
     'metadata.json': JSON.stringify({ target: 'start:\n\t@echo start\n' }),
     'src/main.js': [
@@ -71,6 +72,35 @@ test('scores a complete portable project and ignores ordinary comments, URLs and
   assert.deepEqual(report.risks, []);
 });
 
+test('ignores paths in JavaScript block comments and preserves paths in nearby code', () => {
+  const localPath = name => posix.join('/', 'etc', name);
+  const token = 'sk-' + 'm'.repeat(25);
+  const tick = String.fromCharCode(96);
+  const contents = [
+    '/*',
+    `edit ${localPath('hosts')}:`,
+    `synthetic token: ${token}`,
+    '*/',
+    'const marker = "/*";',
+    `readFileSync(${JSON.stringify(localPath('runtime.json'))}); /* start another comment`,
+    `${localPath('commented')} */ readFileSync(${JSON.stringify(localPath('other.json'))});`,
+    'const literal = ' + tick + '/*',
+    localPath('template-value'),
+    '*/' + tick + ';',
+    '/* trailing comment',
+    localPath('trailing'),
+    '*/',
+  ].join('\r\n');
+  const report = analyze({
+    'examples/vhost/index.js': contents,
+    'src/comment-only.ts': ['/**', localPath('documented'), '*/'].join('\n'),
+  });
+
+  assert.deepEqual(report.portability.hardcodedPaths.filePaths, ['examples/vhost/index.js']);
+  assert.deepEqual(report.risks.filter(risk => risk.title === '硬编码绝对路径').map(risk => risk.lineNumber), [6, 7, 9]);
+  assert.deepEqual(report.risks.filter(risk => risk.title === '疑似暴露的密钥或 Token').map(risk => risk.lineNumber), [3]);
+});
+
 test('finds path, Windows and environment risks and masks every supported secret pattern', () => {
   const tokens = [
     'sk-' + 'o'.repeat(23), 'AKID' + 't'.repeat(12), 'LTAI' + 'a'.repeat(12), 'AKIA' + '7'.repeat(16),
@@ -78,7 +108,7 @@ test('finds path, Windows and environment risks and masks every supported secret
   ];
   const report = analyze({
     'README.md': readme + '\n\n' + 'Run with ' + String.fromCharCode(96) + 'cmd /c setup.cmd' + String.fromCharCode(96),
-    'package.json': JSON.stringify({ scripts: { start: 'set MODE=local && powershell -File setup.ps1' } }),
+    'package.json': JSON.stringify({ scripts: { start: 'set MODE=local && powershell -File setup.ps1' }, dependencies: { express: '^5' } }),
     'scripts/setup.bat': '@echo off',
     'scripts/setup.cmd': '@echo off',
     'scripts/setup.ps1': 'Write-Output hello',
@@ -90,11 +120,11 @@ test('finds path, Windows and environment risks and masks every supported secret
       root: posix.join('/', 'Users', 'alice', 'app'),
       cache: posix.join('/', 'root', 'cache'),
     }, null, 2),
-    'src/client.js': ['Bearer', ...tokens.slice(4), privateKeyHeader].join('\n'),
+    'src/client.js': ['Bearer ' + tokens[4], ...tokens.slice(5), privateKeyHeader].join('\n'),
     ['nested/' + tokens[0] + '.txt']: 'text',
   });
-  assert.equal(report.readiness.total, 40);
-  assert.equal(report.scoreBreakdown.reduce((sum, item) => sum + item.deductedPoints, 0), 60);
+  assert.equal(report.readiness.total, 43);
+  assert.equal(report.scoreBreakdown.reduce((sum, item) => sum + item.deductedPoints, 0), 57);
   assert.deepEqual(report.portability.hardcodedPaths.filePaths, ['config/settings.json']);
   assert.equal(report.risks.filter(risk => risk.title === '硬编码绝对路径').length, 3);
   assert.equal(report.risks.filter(risk => risk.category === 'portability').length, 9);
@@ -125,6 +155,92 @@ test('reports missing documentation and skips checks with incomplete scan covera
   assert.deepEqual(weak.completeness.readme.sections.map(section => section.status), ['pass', 'fail', 'fail']);
 });
 
+test('recognizes Conda and shell entry points and distinguishes Windows paths and commands from prose', () => {
+  const tick = String.fromCharCode(96);
+  const report = analyze({
+    'environment.yml': 'name: demo\ndependencies:\n  - python=3.12',
+    'environment.yaml': 'name: alternate\ndependencies:\n  - python',
+    'scripts/start.sh': '#!/bin/sh\nexec python app.py',
+    'app.py': [
+      'cache = ' + JSON.stringify(['C:', 'work', 'cache'].join('/')),
+      'url = "https://example.test/a/b"',
+      'drive_relative = "C:cache"',
+    ].join('\n'),
+    'docs/setup.md': ['Copy the starter template', 'copy source.txt destination.txt', 'cmd /c scripts/setup.cmd']
+      .map(example => tick + example + tick).join('\n'),
+  });
+
+  assert.deepEqual(report.completeness.dependencyManifest.filePaths, ['environment.yml', 'environment.yaml']);
+  assert.deepEqual(report.completeness.startupScript.filePaths, ['scripts/start.sh']);
+  assert.deepEqual(report.risks.map(risk => [risk.filePath, risk.lineNumber, risk.title]), [
+    ['app.py', 1, '硬编码绝对路径'],
+    ['docs/setup.md', 2, '文档中的 Windows 专用命令'],
+    ['docs/setup.md', 3, '文档中的 Windows 专用命令'],
+  ]);
+});
+
+test('only ignores paths confirmed to be virtual test fixtures', () => {
+  const windowsPath = name => JSON.stringify(['C:', 'Test', name].join('\\'));
+  const virtualKey = windowsPath('types.ts');
+  const virtualName = windowsPath('Test.vue');
+  const diskPath = windowsPath('settings.json');
+  const helper = [
+    'import { normalize } from "node:path";',
+    'import { readFileSync } from "node:fs";',
+    'function resolve(code: string, files: Record<string, string>, options: object, sourceName: string) {',
+    '  const ast = parse(code, { filename: sourceName });',
+    '  return compile(ast, { fs: {',
+    '    fileExists(path: string) { return !!(files[path] ?? files[normalize(path)]); },',
+    '    readFile(path: string) { return files[path] ?? files[normalize(path)]; },',
+    '  }, ...options });',
+    '}',
+  ];
+  const fixture = [
+    `  const files = { ${virtualKey}: "export type T = number" };`,
+    `  const result = resolve("import './types'", files, {}, ${virtualName});`,
+    '  expect(result.deps).toStrictEqual(Object.keys(files).map(normalize));',
+  ];
+  const source = (body, prefix = helper) => [...prefix, 'test("resolve", () => {', ...body, '});'].join('\n');
+  const hits = (path, content) => analyze({ [path]: content }).risks
+    .filter(risk => risk.title === '硬编码绝对路径').map(risk => risk.lineNumber);
+  const testPath = 'test/resolveType.spec.ts';
+
+  assert.deepEqual(hits(testPath, source(fixture)), []);
+  assert.deepEqual(hits('src/resolveType.ts', source(fixture)), [11, 12]);
+  assert.deepEqual(hits(testPath, source([...fixture, `  readFileSync(${diskPath});`])), [14]);
+  assert.deepEqual(hits(testPath, source([`${fixture[0]} readFileSync(${diskPath});`, ...fixture.slice(1)])), [11]);
+  assert.deepEqual(hits(testPath, source([...fixture, '  readFileSync(Object.keys(files)[0]);'])), [11, 12]);
+  const nativeReader = helper.map(line => line.includes('readFile(path:')
+    ? '    readFile(path: string) { return readFileSync(path, "utf8"); },' : line);
+  assert.deepEqual(hits(testPath, source(fixture, nativeReader)), [11, 12]);
+  const overridden = fixture.map(line => line.replace('files, {},', 'files, { fs: nativeFS },'));
+  assert.deepEqual(hits(testPath, source(overridden)), [11, 12]);
+});
+
+test('reports populated env credentials and encrypted key headers while allowing explicit template placeholders', () => {
+  const customToken = 'demoVendorToken_9Q7X3M5N8K2';
+  const knownToken = 'sk-' + 't'.repeat(25);
+  const placeholder = 'sk-' + 'PLACEHOLDER'.repeat(3);
+  const encryptedKeyLabel = 'ENCRYPTED PRIVATE KEY';
+  const encryptedHeader = `-----BEGIN ${encryptedKeyLabel}-----`;
+  const report = analyze({
+    '.env.local': `# local credentials\nexport SERVICE_API_TOKEN="${customToken}" # synthetic\nOPENAI_API_KEY=${knownToken}`,
+    '.env.template': `OPENAI_API_KEY=${placeholder}\nSERVICE_API_TOKEN=\${SERVICE_API_TOKEN}\nBACKUP_API_TOKEN=${knownToken}`,
+    'fixtures/encrypted.txt': [encryptedHeader, 'synthetic-body', `-----END ${encryptedKeyLabel}-----`].join('\n'),
+  });
+
+  const tokens = report.risks.filter(risk => risk.title === '疑似暴露的密钥或 Token');
+  assert.deepEqual(tokens.map(risk => [risk.filePath, risk.lineNumber, risk.redactedSnippet]), [
+    ['.env.local', 2, customToken.slice(0, 4) + '****' + customToken.slice(-4)],
+    ['.env.local', 3, knownToken.slice(0, 4) + '****' + knownToken.slice(-4)],
+    ['.env.template', 3, knownToken.slice(0, 4) + '****' + knownToken.slice(-4)],
+  ]);
+  assert.deepEqual(report.security.privateKeys.filePaths, ['fixtures/encrypted.txt']);
+  assert.deepEqual(report.security.trackedEnvFiles.filePaths, ['.env.local']);
+  const json = JSON.stringify(report);
+  for (const value of [customToken, knownToken, encryptedHeader]) assert.ok(!json.includes(value));
+});
+
 test('reads an actual Git commit with filtering, binary detection and no working-tree reads', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'repo-health-test-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim();
@@ -140,6 +256,10 @@ test('reads an actual Git commit with filtering, binary detection and no working
       'dist/bundle.js': 'ignored',
       'build/output.js': 'ignored',
       '__pycache__/ignored.pyc': 'ignored',
+      '.nuxt/ignored.js': 'ignored',
+      'venv/ignored.ps1': 'ignored',
+      'package-lock.json': 'retained file metadata only',
+      'client.min.css': 'retained file metadata only',
       'image.png': 'content should still be ignored',
       'unknown.data': Buffer.from([0, 1, 2, 0xff]),
       'boundary.txt': Buffer.alloc(maxFileBytes, 'x'),
@@ -164,7 +284,10 @@ test('reads an actual Git commit with filtering, binary detection and no working
     assert.equal(snapshot.contents.get('utf16.ps1'), 'Write-Output hello');
     assert.equal(snapshot.contents.get('boundary.txt').length, maxFileBytes);
     assert.deepEqual([...snapshot.unreadPaths], ['large.txt']);
-    for (const path of ['image.png', 'unknown.data', 'large.txt']) assert.equal(snapshot.contents.has(path), false);
+    for (const path of ['image.png', 'unknown.data', 'large.txt', 'package-lock.json', 'client.min.css']) {
+      assert.equal(snapshot.contents.has(path), false);
+    }
+    for (const path of ['package-lock.json', 'client.min.css']) assert.ok(snapshot.files.some(file => file.path === path));
     for (const path of Object.keys(fixture).filter(path => path.includes('/')).concat('untracked.cmd', 'ignored-link')) {
       assert.ok(!snapshot.files.some(file => file.path === path));
     }
@@ -235,7 +358,7 @@ test('AI context projects repository content onto safe facts before external tra
   assert.doesNotMatch(prepared.context.readmeExcerpt, /server/);
   assert.match(prepared.context.readmeExcerpt, /express web framework/);
   assert.deepEqual(prepared.context.dependencies.packageSamples[0].fields.knownDependencies, ['express']);
-  assert.equal(prepared.context.scan.riskCounts.High, 3);
+  assert.equal(prepared.context.scan.riskCounts.High, 5);
   assert.ok(prepared.verifiedSteps.some(step => step.includes('npm ci')));
   assert.ok(prepared.verifiedSteps.some(step => step.includes('npm run dev')));
 });
@@ -282,4 +405,158 @@ test('review API handles missing key, invalid output, concurrent requests and a 
   assert.deepEqual(await first.json(), { source: 'ai', ...expected });
   assert.deepEqual(await second.json(), { source: 'ai', ...expected });
   assert.equal(provider.mock.callCount(), 2);
+});
+test('recognizes documented Node example entries only when the target exists in the repository', () => {
+  const files = { 'README.md': 'npm start\nnode examples/content-negotiation', 'package.json': '{}' };
+  assert.equal(analyze(files).completeness.startupScript.status, 'fail');
+  const entry = 'examples/content-negotiation/index.js';
+  const result = analyze({ ...files, [entry]: 'server.listen(3000)' }).completeness;
+  assert.deepEqual(result.startupScript.filePaths, [entry]);
+  assert.equal(result.startupScript.status, 'pass');
+  assert.equal(result.readme.status, 'fail');
+});
+test('keeps host paths while filtering routes, container targets, source prose and expected test values', () => {
+  const host = posix.join('/', 'etc', 'settings.json');
+  const route = posix.join('/', 'var', 'status');
+  const container = posix.join('/', 'opt', 'app');
+  const quote = JSON.stringify;
+  const report = analyze({
+    'src/routes.js': [
+      `app.get(${quote(route)}, handler);`,
+      `app.get(${quote(route)}, readFileSync(${quote(host)}));`,
+    ].join('\n'),
+    Dockerfile: ['FROM alpine', `WORKDIR ${container}`, `COPY . ${container}`, `RUN cat ${host}`,
+      `COPY . "${container} folder"`, `COPY [".", "${container} folder"]`].join('\n'),
+    'compose.yaml': [
+      'services:', '  web:', '    volumes:',
+      `      - ./data:${container}`,
+      `      - "${host}:${container}:ro"`,
+      '      - type: bind', `        source: ${host}`, `        target: ${container}`,
+      '    environment:', `      TARGET: ${host}`,
+    ].join('\n'),
+    'src/service.go': ['/*', `Inspect ${host}`, '*/', `os.ReadFile(${quote(host)})`].join('\n'),
+    'src/app.py': ['"""Example', `Inspect ${host}`, '"""', `config = open(${quote(host)})`,
+      'config = open(', `    """${host}"""`, ')'].join('\n'),
+    'tests/paths.test.js': [
+      `expect(normalize(input)).toBe(${quote(host)});`,
+      `expect(readFileSync(${quote(host)})).toBe(${quote(host)});`,
+    ].join('\n'),
+    'settings.json': JSON.stringify({ description: `Inspect ${host} before setup`, file: host }, null, 2),
+  });
+  const hits = Object.groupBy(report.risks.filter(risk => risk.title === '硬编码绝对路径'), risk => risk.filePath);
+  assert.deepEqual(Object.fromEntries(Object.entries(hits).map(([path, risks]) => [path, risks.map(risk => risk.lineNumber)])), {
+    'compose.yaml': [5, 7, 10],
+    Dockerfile: [4],
+    'settings.json': [3],
+    'src/app.py': [4, 6],
+    'src/routes.js': [2],
+    'src/service.go': [4],
+    'tests/paths.test.js': [2],
+  });
+});
+test('classifies route aliases, Docker build paths, Compose forms, and prose boundary cases', () => {
+  const host = posix.join('/', 'etc', 'settings');
+  const route = posix.join('/', 'var', 'status');
+  const container = posix.join('/', 'opt', 'app');
+  const context = posix.join('/', 'opt', 'base');
+  const quote = JSON.stringify;
+  const tick = String.fromCharCode(96);
+  const report = analyze({
+    'src/routes.js': [
+      'const express = require("express");',
+      'const api = express.Router();',
+      `api.get(${quote(route)}, handler);`,
+      'api.get(' + tick + route + '/${name}' + tick + ', handler);',
+      `api.get(${quote(route)}, readFileSync(${quote(host)}));`,
+    ].join('\n'),
+    'src/config.js': [
+      'const app = createConfigReader();',
+      `app.get(${quote(host)}, { encoding: 'utf8' });`,
+      `app.get(${quote(host)}, handler);`,
+    ].join('\n'),
+    Dockerfile: [
+      `COPY ${context} ${container}`, 'COPY . ' + String.fromCharCode(92), `  ${container}`,
+      `RUN cat ${host}`, 'RUN cat <<EOF', `COPY ${host}`, 'EOF',
+    ].join('\n'),
+    'compose.yml': [
+      'services:', '  web:', '    volumes:', `      - "./my data:${container}"`, `      - "${host}:${container}"`,
+      '  worker:', `    volumes: ["./my data:${container}", "${host}:${container}:ro"]`,
+    ].join('\n'),
+    'src/doc.py': ['(', `    """Edit ${host} before startup."""`, ')', 'open(', `    """${host}"""`, ')'].join('\n'),
+    'tests/paths.test.js': [
+      'import assert from "node:assert/strict";',
+      `assert.equal(normalized, ${quote(host)});`,
+      `assert.equal(readFileSync(${quote(host)}), ${quote(host)});`,
+    ].join('\n'),
+    'settings.json': JSON.stringify({ description: `${host} is an example only`, summary: host }, null, 2),
+  });
+  const hits = Object.groupBy(report.risks.filter(risk => risk.title === '硬编码绝对路径'), risk => risk.filePath);
+  assert.deepEqual(Object.fromEntries(Object.entries(hits).map(([path, risks]) => [path, risks.map(risk => risk.lineNumber)])), {
+    'compose.yml': [5, 7],
+    Dockerfile: [4, 6],
+    'settings.json': [3],
+    'src/config.js': [2, 3],
+    'src/doc.py': [5],
+    'src/routes.js': [5],
+    'tests/paths.test.js': [3],
+  });
+});
+test('validates certificate blocks before suppressing credential matches', () => {
+  const der = new X509Certificate(rootCertificates[0]).raw;
+  const prefix = 'AK' + 'ID';
+  const token = prefix + 'A2b3C4d5E6f7G8h9';
+  const offset = Math.floor((der.length - 48) / 48) * 48;
+  Buffer.from(token + '+AAA', 'base64').copy(der, offset);
+  const body = der.toString('base64').match(/.{1,64}/g).join('\n');
+  const begin = '-----BEGIN CERTIFICATE-----';
+  const end = '-----END CERTIFICATE-----';
+  const valid = [begin, body, end].join('\n');
+  assert.doesNotThrow(() => new X509Certificate(valid));
+  const report = analyze({
+    'roots.pem': [valid, '', token].join('\n'),
+    'bad.pem': [begin, token, end].join('\n'),
+  });
+  assert.deepEqual(report.risks.filter(risk => risk.title === '疑似暴露的密钥或 Token')
+    .map(risk => [risk.filePath, risk.lineNumber]), [
+    ['bad.pem', 2], ['roots.pem', valid.split('\n').length + 2],
+  ]);
+  assert.ok(!JSON.stringify(report).includes(token));
+});
+
+test('applies the core rule additions and preserves partial scoring', () => {
+  const networkPath = String.fromCharCode(92).repeat(2) + ['server', 'share', 'settings.json'].join(String.fromCharCode(92));
+  const dbPassword = 'Mix4gH8k_S1n';
+  const apiValue = 'R46Gh7M8qB2kv3PNfY5s';
+  const report = analyze({
+    'README.rst': 'Install this project',
+    'package.json': '{"scripts":{"serve":"node app.js"}}',
+    'backend/requirements-prod.txt': 'framework',
+    'frontend/Main.csproj': '<Project />',
+    'lib/deep/requirements.txt': 'ignored for completeness',
+    'scripts/setup.wsf': '',
+    'scripts/setup.sh': '',
+    '.github/workflows/ci.yml': 'jobs:\n  test:\n    steps:\n      - run: |\n          robocopy source destination',
+    'app.js': 'const path = ' + JSON.stringify(networkPath),
+    'docs/setup.md': 'Use ' + posix.join('/', 'etc', 'app-config'),
+    'config.json': JSON.stringify({
+      url: 'postgres://user:' + dbPassword + '@localhost/app',
+      apiKey: apiValue,
+      authToken: 'dummy_placeholder_example',
+    }, null, 2),
+    '.npmrc': '_authToken=${NPM_TOKEN}',
+    'sample.env.txt': 'x'.repeat(1501),
+    '.env.template': 'PORT=3000',
+  });
+  assert.equal(report.completeness.readme.points, 5);
+  assert.deepEqual(report.completeness.dependencyManifest.filePaths, ['backend/requirements-prod.txt', 'frontend/Main.csproj']);
+  assert.deepEqual(report.completeness.startupScript.filePaths, ['package.json']);
+  assert.ok(report.risks.some(risk => risk.filePath === 'scripts/setup.wsf' && risk.severity === 'Low'));
+  assert.ok(report.risks.some(risk => risk.filePath === '.github/workflows/ci.yml' && risk.lineNumber === 5));
+  assert.equal(report.portability.hardcodedPaths.points, 10);
+  assert.match(report.security.trackedEnvFiles.summary, /合规/);
+  assert.deepEqual(report.security.exposedSecrets.filePaths, ['config.json']);
+  assert.equal(report.risks.filter(risk => risk.category === 'security').length, 2);
+  const result = JSON.stringify(report);
+  assert.ok(!result.includes(dbPassword) && !result.includes(apiValue));
+  assert.equal(analyze({ 'app.js': 'x'.repeat(1501) }).security.exposedSecrets.status, 'skipped');
 });

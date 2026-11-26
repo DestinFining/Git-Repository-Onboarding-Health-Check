@@ -9,7 +9,7 @@ import type {
 type Checks = Pick<ScanReport, 'completeness' | 'portability' | 'security'>;
 
 const weights = {
-  completeness: { readme: 15, dependencyManifest: 10, startupScript: 15 },
+  completeness: { readme: 15, dependencyManifest: 15, startupScript: 10 },
   portability: { windowsOnlyScripts: 15, hardcodedPaths: 15 },
   security: { exposedSecrets: 10, privateKeys: 10, trackedEnvFiles: 10 },
 } satisfies { [Dimension in ScoreDimension]: Record<keyof Checks[Dimension], number> };
@@ -31,7 +31,8 @@ export function calculateScore(checks: Checks): Pick<ScanReport, 'readiness' | '
     for (const check of Object.keys(dimensionWeights) as Check[]) {
       const maxPoints = dimensionWeights[check];
       const { status, summary } = results[check];
-      const points = status === 'pass' ? maxPoints : 0;
+      const points = status === 'pass' ? maxPoints : status === 'skipped' ? 0
+        : Math.max(0, Math.min(maxPoints, results[check].points ?? 0));
       dimensions[dimension].points += points;
       dimensions[dimension].maxPoints += maxPoints;
       total += points;

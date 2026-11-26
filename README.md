@@ -11,13 +11,13 @@
 
 ## 功能截图
 
-> ** 报告总览**
+> **报告总览**
 >
 > 　<img src="./IMAGE/image.png" alt="alt text" style="zoom: 50%;" />
 >
 > 仓库元信息、规则评分、维度进度条和关键指标。
 
-> ** 风险与接入建议**
+> **风险与接入建议**
 >
 > 　<img src="./IMAGE/image-1.png" alt="alt text" style="zoom: 50%;" />。脱敏风险片段、完整度清单及 AI 或静态建议面板。
 

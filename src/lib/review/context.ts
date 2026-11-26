@@ -11,7 +11,7 @@ const names = new Set([
   'web', 'core', 'database', 'docker', '.github', 'workflows', 'readme', 'readme.md', 'license', 'dockerfile',
   'compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml', 'makefile', 'procfile', 'package.json',
   'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'pnpm-workspace.yaml', 'requirements.txt',
-  'pyproject.toml', 'pipfile', 'go.mod', 'go.sum', 'cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts',
+  'pyproject.toml', 'pipfile', 'environment.yml', 'environment.yaml', 'go.mod', 'go.sum', 'cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts',
   'gemfile', 'composer.json', 'deno.json', 'pubspec.yaml', 'index.js', 'index.ts', 'main.go', 'main.py', 'app.py',
   'tsconfig.json', 'vite.config.ts', 'next.config.js', 'next.config.ts',
 ]);

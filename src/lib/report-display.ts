@@ -5,7 +5,7 @@ export const severities = { High: '高危', Medium: '中危', Low: '低危' };
 export const statuses: Record<CheckStatus, string> = { pass: '通过', fail: '需整改', skipped: '未验证' };
 export const checkNames: Record<ScanReport['scoreBreakdown'][number]['check'], string> = {
   readme: 'README', dependencyManifest: '依赖清单', startupScript: '启动方式', windowsOnlyScripts: 'Windows 专用脚本',
-  hardcodedPaths: '硬编码路径', exposedSecrets: '暴露密钥', privateKeys: '私钥', trackedEnvFiles: '环境文件',
+  hardcodedPaths: '硬编码路径', exposedSecrets: '暴露密钥', privateKeys: '私钥', trackedEnvFiles: '敏感配置文件',
 };
 export const phaseLabels: Record<ScanPhase, string> = {
   clone: '正在拉取仓库', structure: '分析工程结构', risks: '扫描敏感风险', report: '生成报告',

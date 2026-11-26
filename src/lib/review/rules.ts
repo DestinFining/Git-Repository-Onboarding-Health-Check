@@ -8,7 +8,9 @@ export function ruleReview(report: ReviewChecks, message: string, verifiedSteps:
   const has = (name: string) => manifests.some(path => path.toLowerCase().split('/').at(-1) === name);
   const ecosystems = [
     [has('package.json'), 'Node.js'],
-    [has('requirements.txt') || has('pyproject.toml'), 'Python'],
+    [has('requirements.txt') || has('pyproject.toml') || has('environment.yml') || has('environment.yaml') ||
+      manifests.some(path => /(?:^|\/)requirements-[^/]+\.txt$/i.test(path)), 'Python'],
+    [manifests.some(path => /\.csproj$/i.test(path)), '.NET'],
     [has('go.mod'), 'Go'],
     [has('cargo.toml'), 'Rust'],
     [has('pom.xml') || has('build.gradle') || has('build.gradle.kts'), 'JVM'],

@@ -36,6 +36,8 @@ export type CheckStatus = 'pass' | 'fail' | 'skipped';
 export interface CheckResult {
   status: CheckStatus;
   summary: string;
+  /** Partial credit for checks that distinguish quality or severity. */
+  points?: number;
   /** Repository-relative paths observed by this check. */
   filePaths: string[];
 }

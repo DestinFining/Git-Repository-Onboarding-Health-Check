@@ -22,6 +22,7 @@ const phases = Object.keys(phaseLabels) as ScanPhase[];
 const levels = Object.keys(severities) as RiskSeverity[];
 const stackByFile: Record<string, string> = {
   'package.json': 'Node.js', 'requirements.txt': 'Python', 'pyproject.toml': 'Python', pipfile: 'Python', 'setup.py': 'Python',
+  'environment.yml': 'Python', 'environment.yaml': 'Python',
   'go.mod': 'Go', 'cargo.toml': 'Rust', 'pom.xml': 'Maven', 'build.gradle': 'Gradle', 'build.gradle.kts': 'Gradle',
   gemfile: 'Ruby', 'composer.json': 'PHP', 'mix.exs': 'Elixir', 'deno.json': 'Deno', 'pubspec.yaml': 'Dart',
 };
@@ -90,7 +91,10 @@ function ScoreCards({ report }: { report: ScanReport }) {
 
 function Indicators({ report }: { report: ScanReport }) {
   const { readme, dependencyManifest, startupScript } = report.completeness;
-  const stacks = [...new Set(dependencyManifest.filePaths.flatMap(path => stackByFile[path.toLowerCase().split('/').pop() ?? ''] ?? []))];
+  const stacks = [...new Set(dependencyManifest.filePaths.flatMap(path => {
+    const name = path.toLowerCase().split('/').pop() ?? '';
+    return stackByFile[name] ?? (/^requirements-.+\.txt$/.test(name) ? 'Python' : name.endsWith('.csproj') ? '.NET' : []);
+  }))];
   const counts = getRiskCounts(report);
   const total = counts.High + counts.Medium + counts.Low;
   const startupNames = [...new Set(startupScript.filePaths.map(path => path.split('/').pop() ?? path))];
