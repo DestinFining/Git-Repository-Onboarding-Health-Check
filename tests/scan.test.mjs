@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import test from 'node:test';
 import { POST } from '../src/app/api/scan/route.ts';
 import { POST as POSTReview } from '../src/app/api/ai-review/route.ts';
@@ -56,10 +56,11 @@ test('scores a complete portable project and ignores ordinary comments, URLs and
     'README.en.md': readme,
     'package.json': '{"scripts":{"build":"tsc"}}',
     '.env.example': 'PORT=3000',
+    'metadata.json': JSON.stringify({ target: 'start:\n\t@echo start\n' }),
     'src/main.js': [
       "let url = 'https://example.test/home/alice/project';",
-      '// Common locations include /home/alice/project',
-      'const label = 1; // example /root/work',
+      `// Common locations include ${posix.join('/', 'home', 'alice', 'project')}`,
+      `const label = 1; // example ${posix.join('/', 'root', 'work')}`,
       String.raw`const regex = /\/home\/alice\//;`,
     ].join('\n'),
   });
@@ -84,7 +85,11 @@ test('finds path, Windows and environment risks and masks every supported secret
     'scripts/setup.vbs': 'WScript.Echo "hello"',
     '.env.local': tokens.slice(0, 4).join('\n'),
     '.env.production.example': 'PLACEHOLDER=unset',
-    'config/settings.json': JSON.stringify({ output: 'D:\\project\\output', root: '/Users/alice/app', cache: '/root/cache' }, null, 2),
+    'config/settings.json': JSON.stringify({
+      output: ['D:', 'project', 'output'].join('\\'),
+      root: posix.join('/', 'Users', 'alice', 'app'),
+      cache: posix.join('/', 'root', 'cache'),
+    }, null, 2),
     'src/client.js': ['Bearer', ...tokens.slice(4), privateKeyHeader].join('\n'),
     ['nested/' + tokens[0] + '.txt']: 'text',
   });

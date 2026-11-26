@@ -20,7 +20,7 @@ const privateKeyHeader = /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----
 const secretPatterns = /sk-[a-zA-Z0-9_-]{20,}|AKID[a-zA-Z0-9]{10,}|LTAI[a-zA-Z0-9]{10,}|AKIA[0-9A-Z]{16}|Bearer\s+[a-zA-Z0-9._-]{15,}|ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9_]+/gi;
 const windowsCommand = /(?:^|[\s"'(&|;])(?:powershell(?:\.exe)?(?=$|[\s"';&|])|cmd(?:\.exe)?\s+\/c\b|set\s+"?[a-z_][\w]*=|copy(?:\.exe)?[ \t]+\S)/i;
 const plainMarkdownCommand = /(?:^|[\s"'(&|;])(?:powershell(?:\.exe)?\s+[-/][a-z]|cmd(?:\.exe)?\s+\/c\b|set\s+"?[a-z_][\w]*=|copy(?:\.exe)?\s+(?:\/[apyb]\b|[^\s]+\.[a-z0-9*?]+[ \t]+\S|[a-z]:\\))/i;
-const windowsPath = /[a-z]:\\+[^\s'"<>()[\]{},;]+/i;
+const windowsPath = /\b[a-z]:\\+[^\s'"<>()[\]{},;]+/i;
 const unixPath = /(?:^|[\s"'=(,:])\/(?:Users\/[a-zA-Z0-9._-]+\/|home\/[a-zA-Z0-9._-]+\/|root\/|(?:etc|var|opt|usr\/local|mnt|srv|tmp|workspace)\/[a-zA-Z0-9._-])[^\s'"<>()[\]{},;]*/;
 const riskDetailsPerCheck = 100;
 
