@@ -7,7 +7,7 @@
 | 项目               | Git 仓库接入体检                                           |
 | 记录人             | DestinFining                                               |
 | 记录时间或开发阶段 | 2026-11-26（扫描、前端和 AI 点评已实现，更新跟踪完成设计） |
-| 对应分支或提交 SHA | 当前工作目录无 Git 元数据，项目分支与提交 SHA 尚未取得。 |
+| 对应分支或提交 SHA | `main` · [本记录所述误报修复对应的代码提交 `18425c80031f5a388d1bf5b77d4a113977ac067d`](https://github.com/DestinFining/Git-Repository-Onboarding-Health-Check/commit/18425c80031f5a388d1bf5b77d4a113977ac067d) |
 
 ## 1. 使用的 AI Coding 工具
 
@@ -54,14 +54,17 @@
 
 ## 4. AI 答错但被我发现并修正
 
-> 下表记录开发过程中可追溯的 AI 代码误判，注明实际发现和修正者。由记录人独立发现或复核的案例仍待确认。
+> 下表记录开发过程中可追溯的 AI 代码误判，注明实际发现和修正者。记录人指出仓库自扫中的误报，Codex 复现、修正并验证。
 
 | 日期 / 任务 | AI 的错误结论或代码行为 | 发现方式与人员 | 修正方式与人员 | 修正后的验证结果 / 证据 |
 | ----------- | ------------------------------------------------------------ | ---------------------------------- | ---------- | ----------------------- |
 | 2026-11-26 · Windows 命令识别 | 初版规则把 README 正文中的 「Copy the environment template」 识别为 Windows `copy` 命令，导致合规样本从预期 100 分降到 85 分。 | Codex 运行合规样本测试时发现评分断言失败，并定位到 README。 | Codex 收紧 Markdown 普通正文的命令匹配，保留代码块和行内代码中的命令检测。 | [回归用例](tests/scan.test.mjs)复跑通过，合规样本恢复到 100 分且风险列表为空。 |
+| 2026-11-26 · 测试样例触发私钥头告警 | AI 在 `tests/scan.test.mjs` 写入两处完整的 OpenSSH 私钥头，用于测试检测和脱敏。仓库自扫把这些合成标记报成私钥风险。 | DestinFining 从自扫报告中指出两处告警，Codex 核对后确认它们都是测试数据。 | Codex 改为在测试运行时生成私钥头尾，并增加断言，确认扫描会命中样例文件。 | 测试源码已无完整的私钥头字面量。9 项测试通过，覆盖私钥头检测、报告脱敏和 AI 摘要过滤。[修复提交 `320c4c3`](https://github.com/DestinFining/Git-Repository-Onboarding-Health-Check/commit/320c4c3) |
+| 2026-11-26 · 测试样例触发绝对路径告警 | AI 将用于测试的绝对路径直接写进源码，造成 3 行告警。Windows 盘符规则还把 Makefile 样例中目标名末尾的字母、冒号和换行转义误认成盘符路径。 | DestinFining 指出 `tests/scan.test.mjs` 的 4 条硬编码绝对路径告警，Codex 复扫重现并核对每条的来源。 | Codex 改为在测试运行时构造绝对路径，为 Windows 盘符匹配增加词边界，并补上目标名后接换行转义的回归断言。 | 复扫测试文件后 4 条告警消失。9 项测试通过，仍能命中 Windows、macOS 和 Linux 的 3 个绝对路径样例。[修复提交 `18425c8`](https://github.com/DestinFining/Git-Repository-Onboarding-Health-Check/commit/18425c8) |
+| 2026-11-26 · 文档引文触发 Windows 命令告警 | AI 用行内代码标记 `USAGE.md` 中的两处英文引文，扫描器把引文识别成 Windows 命令。 | DestinFining 指出 `USAGE.md` 第 27 和 61 行，Codex 复扫确认两条告警的类型均为 Windows 专用命令。 | Codex 用中文引号标记这两处引文，保留原文。 | 复扫 `USAGE.md` 后两条告警消失。[修复提交 `18425c8`](https://github.com/DestinFining/Git-Repository-Onboarding-Health-Check/commit/18425c8) |
 
 ## 5. 提交说明
 
 - **AI 参与的范围**　包括需求拆解与提示词规划、扫描引擎与评分代码、仪表盘与交互、AI 接口、测试和文档。参与比例未量化。
 - **我最终审阅和验证的范围**　记录人尚未补充独立人工复核结果。已复跑的自动化检查及开发阶段浏览器验证见第 3 节。
-- **仍未验证或已知限制**　扫描范围为受支持的公开 HTTPS 仓库。远端更新跟踪和增量复扫仍处于设计阶段。真实 DeepSeek 连接、独立样本集准确率以及项目提交 SHA 尚待确认。
+- **仍未验证或已知限制**　扫描范围为受支持的公开 HTTPS 仓库。远端更新跟踪和增量复扫仍处于设计阶段。真实 DeepSeek 连接和独立样本集准确率尚待验证。
